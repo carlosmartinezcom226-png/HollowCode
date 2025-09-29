@@ -1,8 +1,4 @@
-"""
-Sistema de reservación de salas (memoria RAM)
-Cumple con: registro clientes, salas, reservaciones, edición nombre evento,
-consultas por fecha, reportes tabulares, validaciones (mín. 2 días).
-"""
+"""Sistema de reservación de salas"""
 from datetime import datetime, date, timedelta
 import sys
 
@@ -14,9 +10,6 @@ counter_client = 0
 counter_room = 0
 counter_reservation = 0
 
-# -----------------------------------------------------------
-# Constantes y utilidades
-# -----------------------------------------------------------
 TURNOS = {
     '1': 'Matutino',
     '2': 'Vespertino',
@@ -24,24 +17,25 @@ TURNOS = {
 }
 
 def next_client_id():
+    """Genera un nuevo ID incremental para clientes"""
     global counter_client
     counter_client += 1
     return f"C{counter_client:03d}"
 
 def next_room_id():
+    """Genera un nuevo ID incremental para salas"""
     global counter_room
     counter_room += 1
     return f"S{counter_room:03d}"
 
 def next_reservation_folio():
+    """Genera un nuevo folio incremental para reservaciones"""
     global counter_reservation
     counter_reservation += 1
     return f"R{counter_reservation:04d}"
 
 def parse_date_input(s):
-    """
-    Espera formato YYYY-MM-DD. Devuelve objeto date o None.
-    """
+    """Espera formato YYYY-MM-DD. Devuelve objeto date o None."""
     try:
         d = datetime.strptime(s.strip(), "%Y-%m-%d").date()
         return d
@@ -49,19 +43,15 @@ def parse_date_input(s):
         return None
 
 def fecha_es_valida_para_reservar(target_date):
-    """
-    Verifica si target_date es, por lo menos, dos días posteriores
-    a la fecha actual del sistema.
-    """
+    """Verifica si target_date es, por lo menos, dos días posteriores
+    a la fecha actual del sistema."""
     hoy = date.today()
     minimo = hoy + timedelta(days=2)
     return target_date >= minimo
 
 def mostrar_clientes_ordenados():
-    """
-    Muestra la lista de clientes ordenada alfabéticamente por apellidos, nombre.
-    Devuelve lista de tuplas (client_id, apellidos, nombre)
-    """
+    """Muestra la lista de clientes ordenada alfabéticamente por apellidos, nombre.
+    Devuelve lista de tuplas (client_id, apellidos, nombre)"""
     items = [(cid, c['apellidos'], c['nombre']) for cid, c in clients.items()]
     items_sorted = sorted(items, key=lambda x: (x[1].lower(), x[2].lower()))
     print("\nClientes registrados:")
@@ -72,20 +62,14 @@ def mostrar_clientes_ordenados():
     print()
     return items_sorted
 
-
 def salas_disponibles_para_fecha(fecha):
-    """
-    Retorna dict: room_id -> {'nombre':..., 'cupo':..., 'turnos_disponibles': [turno_keys]}
-    Considera reservas existentes y retorna solo aquellas salas con al menos un turno disponible.
-    """
+    """Retorna dict: room_id -> {'nombre':..., 'cupo':..., 'turnos_disponibles': [turno_keys]}
+    Considera reservas existentes y retorna solo aquellas salas con al menos un turno disponible."""
     disponible = {}
     for rid, r in rooms.items():
-        # por defecto todos los turnos están disponibles
         disponibles_turnos = set(TURNOS.keys())
-        # quitar los turnos ya reservados para esta sala y fecha
         for res in reservations:
             if res['room_id'] == rid and res['fecha'] == fecha:
-                # obtener clave de turno por valor
                 clave_turno = None
                 for k, v in TURNOS.items():
                     if v == res['turno']:
@@ -101,12 +85,9 @@ def salas_disponibles_para_fecha(fecha):
             }
     return disponible
 
-
 def imprimir_tabla_reservas(lista_res):
-    """
-    Imprime tabla de reservas: Folio | Fecha | Turno | Sala | Cupo | Cliente | Evento
-    lista_res es lista de dicts de reservations
-    """
+    """Imprime tabla de reservas: Folio | Fecha | Turno | Sala | Cupo | Cliente | Evento
+    lista_res es lista de dicts de reservations"""
     if not lista_res:
         print("\nNo hay reservaciones para mostrar.\n")
         return
@@ -121,11 +102,8 @@ def imprimir_tabla_reservas(lista_res):
         print(f"{r['folio']:8} | {r['fecha'].isoformat():10} | {r['turno'][:10]:10} | {sala[:15]:15} | {str(cupo):4} | {cliente[:20]:20} | {r['evento'][:30]:30}")
     print()
 
-
-# -----------------------------------------------------------
-# Operaciones principales
-# -----------------------------------------------------------
 def registrar_cliente():
+    """Registra al cliente solicitando nombre y apellidos, ademas de poder cancelar la operacion."""
     print("\n--- Registrar nuevo cliente ---")
     nombre = input("Nombre: ").strip()
     if nombre.upper() == 'C':
@@ -142,8 +120,8 @@ def registrar_cliente():
     clients[cid] = {'nombre': nombre, 'apellidos': apellidos}
     print(f"Cliente registrado con clave: {cid}\n")
 
-
 def registrar_sala():
+    """Registra una nueva sala solicitando nombre y cupo para esta."""
     print("\n--- Registrar nueva sala ---")
     nombre = input("Nombre de la sala: ").strip()
     if nombre.upper() == 'C':
@@ -164,7 +142,6 @@ def registrar_sala():
     rooms[sid] = {'nombre': nombre, 'cupo': cupo}
     print(f"Sala registrada con clave: {sid}\n")
 
-
 def registrar_reservacion():
     print("\n--- Registrar reservación ---")
     if not clients:
@@ -174,7 +151,6 @@ def registrar_reservacion():
         print("No hay salas registradas. Registra primero al menos una sala.\n")
         return
 
-    # Mostrar clientes ordenados
     clientes_ordenados = mostrar_clientes_ordenados()
     while True:
         clave = input("Introduce la clave del cliente (o 'C' para cancelar): ").strip()
@@ -188,7 +164,6 @@ def registrar_reservacion():
             print("Clave no encontrada. Se mostrará nuevamente el listado.")
             mostrar_clientes_ordenados()
 
-    # Fecha: validar formato y que sea >= hoy + 2 días
     while True:
         fecha_txt = input("Fecha a reservar (YYYY-MM-DD) o 'C' para cancelar: ").strip()
         if fecha_txt.upper() == 'C':
@@ -204,7 +179,6 @@ def registrar_reservacion():
             continue
         break
 
-    # Mostrar salas que tienen turnos disponibles para esa fecha
     disponibles = salas_disponibles_para_fecha(fecha)
     if not disponibles:
         print("No hay salas con turnos disponibles para esa fecha.\n")
@@ -216,7 +190,6 @@ def registrar_reservacion():
         turnos_txt = ", ".join([f"{k}-{TURNOS[k]}" for k in info['turnos_disponibles']])
         print(f"{rid:6} | {info['nombre'][:20]:20} | {str(info['cupo']):4} | {turnos_txt:30}")
 
-    # Elegir sala
     while True:
         sala_sel = input("Introduce la clave de la sala a reservar (o 'C' para cancelar): ").strip()
         if sala_sel.upper() == 'C':
@@ -228,7 +201,6 @@ def registrar_reservacion():
         sala_id = sala_sel
         break
 
-    # Elegir turno dentro de los disponibles
     posibles_turnos = disponibles[sala_id]['turnos_disponibles']
     print("Turnos disponibles para la sala elegida:")
     for k in posibles_turnos:
@@ -244,7 +216,6 @@ def registrar_reservacion():
         turno_text = TURNOS[t_sel]
         break
 
-    # Nombre del evento (no vacío ni solo espacios)
     while True:
         nombre_evento = input("Nombre del evento (obligatorio) o 'C' para cancelar: ").rstrip()
         if nombre_evento.upper() == 'C':
@@ -255,7 +226,6 @@ def registrar_reservacion():
             continue
         break
 
-    # Generar folio y registrar la reservación
     folio = next_reservation_folio()
     nueva = {
         'folio': folio,
@@ -265,7 +235,7 @@ def registrar_reservacion():
         'turno': turno_text,
         'evento': nombre_evento
     }
-    # Protección: doble verificación que no exista ya otra reserva en mismo room/fecha/turno
+
     for r in reservations:
         if r['room_id'] == sala_id and r['fecha'] == fecha and r['turno'] == turno_text:
             print("Error: la sala ya está reservada para ese turno en la fecha indicada. Operación cancelada.")
@@ -273,14 +243,13 @@ def registrar_reservacion():
     reservations.append(nueva)
     print(f"\nReservación registrada con folio: {folio}\n")
 
-
 def editar_nombre_evento():
+    """Permite modificar el nombre de un evento de una reservación en un rango de fechas dado"""
     print("\n--- Editar nombre de evento de una reservación ---")
     if not reservations:
         print("No hay reservaciones registradas.\n")
         return
 
-    # Pedir rango de fechas
     print("Indica el rango de fechas para buscar eventos (formato YYYY-MM-DD).")
     inicio_txt = input("Fecha inicio (o 'C' para cancelar): ").strip()
     if inicio_txt.upper() == 'C':
@@ -299,13 +268,11 @@ def editar_nombre_evento():
         print("Rango inválido: la fecha inicio es posterior a la fecha fin. Operación cancelada.")
         return
 
-    # Filtrar reservas en ese rango (inclusive)
     filtradas = [r for r in reservations if inicio <= r['fecha'] <= fin]
     if not filtradas:
         print("No se encontraron eventos en el rango de fechas indicado.\n")
         return
 
-    # Mostrar tabla con folio, nombre y fecha
     print("\nEventos en el rango:")
     print(f"{'Folio':8} | {'Fecha':10} | {'Evento':40}")
     print("-" * 66)
@@ -313,7 +280,6 @@ def editar_nombre_evento():
         print(f"{r['folio']:8} | {r['fecha'].isoformat():10} | {r['evento'][:40]:40}")
     print()
 
-    # Seleccionar folio a modificar
     folio_sel = None
     folios_validos = {r['folio'] for r in filtradas}
     while True:
@@ -329,7 +295,6 @@ def editar_nombre_evento():
         folio_sel = folio_input
         break
 
-    # Pedir nuevo nombre de evento (no vacío)
     for r in reservations:
         if r['folio'] == folio_sel:
             while True:
@@ -344,8 +309,8 @@ def editar_nombre_evento():
                 print("Nombre del evento actualizado correctamente.\n")
                 return
 
-
 def consultar_reservaciones_por_fecha():
+    """Muestra todas las reservaciones que coincidan con una fecha"""
     print("\n--- Consultar reservaciones por fecha ---")
     if not reservations:
         print("No hay reservaciones registradas.\n")
@@ -363,7 +328,6 @@ def consultar_reservaciones_por_fecha():
         print("No hay reservaciones para la fecha indicada.\n")
         return
     imprimir_tabla_reservas(filtradas)
-
 
 def menu_principal():
     opciones = {
@@ -395,9 +359,8 @@ def menu_principal():
         except Exception as e:
             print("Ocurrió un error durante la operación:", str(e))
 
-
-# Funciones auxiliares para mostrar salas
 def mostrar_todas_las_salas():
+    """Muestra todas las salas registradas con su clave, nombre y cupo"""
     if not rooms:
         print("\nNo hay salas registradas.\n")
         return
@@ -409,6 +372,6 @@ def mostrar_todas_las_salas():
     print()
 
 if __name__ == "__main__":
-    print("Sistema de Reservación de Salas - The Suit")
+    print("Sistema de Reservación de Salas - Coworking")
     print("Nota: en cualquier entrada puedes teclear 'C' para cancelar la operación actual cuando aplique.")
     menu_principal()
