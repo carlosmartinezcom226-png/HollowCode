@@ -1,0 +1,415 @@
+print("Sistema de Reservación de Salas - Coworking")
+from datetime import datetime, date, timedelta
+import sqlite3
+import json
+import os
+import re
+DB_FILE = "Reservacion.db"
+TURNOS = {'1': 'Matutino', '2': 'Vespertino', '3': 'Nocturno'}
+
+def abrir_conexion() -> sqlite3.Connection:
+    """Abre la conexión a la base de datos SQLite y crea las tablas necesarias."""
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""CREATE TABLE IF NOT EXISTS clientes (
+                    id_cliente TEXT PRIMARY KEY,
+                    nombre TEXT NOT NULL,
+                    apellidos TEXT NOT NULL
+                )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS salas (
+                    id_sala TEXT PRIMARY KEY,
+                    nombre TEXT NOT NULL,
+                    cupo INTEGER NOT NULL
+                )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS reservas (
+                    folio TEXT PRIMARY KEY,
+                    id_cliente TEXT NOT NULL,
+                    id_sala TEXT NOT NULL,
+                    fecha TEXT NOT NULL,
+                    turno TEXT NOT NULL,
+                    evento TEXT NOT NULL,
+                    FOREIGN KEY(id_cliente) REFERENCES clientes(id_cliente),
+                    FOREIGN KEY(id_sala) REFERENCES salas(id_sala)
+                )""")
+    c.execute("""CREATE TABLE IF NOT EXISTS contadores (
+                    llave TEXT PRIMARY KEY,
+                    valor INTEGER NOT NULL
+                )""")
+    for llave in ('cliente', 'sala', 'reserva'):
+        c.execute("INSERT OR IGNORE INTO contadores(llave, valor) VALUES (?, ?)", (llave, 0))
+    conn.commit()
+    return conn
+
+def siguiente_id(conn: sqlite3.Connection, llave: str, prefijo: str) -> str:
+    """Genera y devuelve el siguiente identificador único usando la tabla contadores."""
+    c = conn.cursor()
+    c.execute("SELECT valor FROM contadores WHERE llave = ?", (llave,))
+    fila = c.fetchone()
+    valor = fila[0] + 1
+    c.execute("UPDATE contadores SET valor = ? WHERE llave = ?", (valor, llave))
+    conn.commit()
+    return f"{prefijo}{valor:03d}"
+
+def convertir_fecha(texto: str):
+    """Convierte texto MM-DD-AAAA a objeto date o devuelve None si inválido."""
+    try:
+        return datetime.strptime(texto.strip(), "%m-%d-%Y").date()
+    except Exception:
+        return None
+
+def fecha_valida(fecha_objetivo: date) -> bool:
+    """Verifica que la fecha sea al menos dos días posterior a la fecha actual."""
+    hoy = date.today()
+    minimo = hoy + timedelta(days=2)
+    return fecha_objetivo >= minimo
+
+def es_nombre_valido(texto: str) -> bool:
+    """Verifica que el texto contenga solo letras y espacios (acentos y ñ incluidos)."""
+    return bool(re.fullmatch(r"[A-Za-zÁÉÍÓÚáéíóúÑñ ]+", texto)) and texto.strip() != ""
+
+def registrar_cliente(conn: sqlite3.Connection):
+    """Registra un cliente nuevo solicitando nombre y apellidos válidos."""
+    print("\n--- Registrar nuevo cliente ---")
+    while True:
+        nombre = input("Nombre: ").strip()
+        if nombre.upper() == 'C':
+            print("Operación cancelada.")
+            return
+        if not nombre or not es_nombre_valido(nombre):
+            print("El nombre solo puede contener letras y espacios.")
+            continue
+        break
+    while True:
+        apellidos = input("Apellidos: ").strip()
+        if apellidos.upper() == 'C':
+            print("Operación cancelada.")
+            return
+        if not apellidos or not es_nombre_valido(apellidos):
+            print("Los apellidos solo pueden contener letras y espacios.")
+            continue
+        break
+    clave = siguiente_id(conn, 'cliente', 'C')
+    c = conn.cursor()
+    c.execute("INSERT INTO clientes(id_cliente, nombre, apellidos) VALUES (?, ?, ?)", (clave, nombre, apellidos))
+    conn.commit()
+    print(f"Cliente registrado con clave: {clave}\n")
+
+def mostrar_clientes(conn: sqlite3.Connection):
+    """Muestra todos los clientes ordenados por apellidos y nombre."""
+    c = conn.cursor()
+    c.execute("SELECT id_cliente, nombre, apellidos FROM clientes ORDER BY apellidos COLLATE NOCASE, nombre COLLATE NOCASE")
+    filas = c.fetchall()
+    if not filas:
+        print("\nNo hay clientes registrados.\n")
+        return
+    print("\nClientes registrados:")
+    print(f"{'Clave':6} | {'Apellidos':25} | {'Nombre':25}")
+    print("-" * 64)
+    for idc, nombre, apellidos in filas:
+        print(f"{idc:6} | {apellidos[:25]:25} | {nombre[:25]:25}")
+    print()
+
+def registrar_sala(conn: sqlite3.Connection):
+    """Registra una nueva sala solicitando nombre y cupo válido."""
+    print("\n--- Registrar nueva sala ---")
+    while True:
+        nombre = input("Nombre de la sala: ").strip()
+        if nombre.upper() == 'C':
+            print("Operación cancelada.")
+            return
+        if not re.fullmatch(r"[A-Za-zÁÉÍÓÚáéíóúÑñ0-9 ]+", nombre):
+            print("El nombre de la sala solo puede contener letras, números y espacios.")
+            continue
+        break
+    while True:
+        cupo_txt = input("Cupo (número entero): ").strip()
+        if cupo_txt.upper() == 'C':
+            print("Operación cancelada.")
+            return
+        if not cupo_txt.isdigit() or int(cupo_txt) <= 0:
+            print("Debe ingresar un número entero positivo.")
+            continue
+        cupo = int(cupo_txt)
+        break
+    clave = siguiente_id(conn, 'sala', 'S')
+    c = conn.cursor()
+    c.execute("INSERT INTO salas(id_sala, nombre, cupo) VALUES (?, ?, ?)", (clave, nombre, cupo))
+    conn.commit()
+    print(f"Sala registrada con clave: {clave}\n")
+
+def mostrar_salas(conn: sqlite3.Connection):
+    """Muestra las salas registradas con su nombre y capacidad."""
+    c = conn.cursor()
+    c.execute("SELECT id_sala, nombre, cupo FROM salas ORDER BY id_sala")
+    filas = c.fetchall()
+    if not filas:
+        print("\nNo hay salas registradas.\n")
+        return
+    print("\nSalas registradas:")
+    print(f"{'Clave':6} | {'Nombre':25} | {'Cupo':4}")
+    print("-" * 40)
+    for ids, nombre, cupo in filas:
+        print(f"{ids:6} | {nombre[:25]:25} | {str(cupo):4}")
+    print()
+
+def salas_disponibles(conn: sqlite3.Connection, fecha: date):
+    """Devuelve salas con turnos libres para una fecha dada."""
+    c = conn.cursor()
+    c.execute("SELECT id_sala, nombre, cupo FROM salas")
+    salas_all = c.fetchall()
+    disponibles = {}
+    for id_s, nombre, cupo in salas_all:
+        turnos_libres = set(TURNOS.keys())
+        c.execute("SELECT turno FROM reservas WHERE id_sala = ? AND fecha = ?", (id_s, fecha.strftime("%m-%d-%Y")))
+        reservas_fecha = c.fetchall()
+        for (turno_nombre,) in reservas_fecha:
+            clave_turno = next((k for k, v in TURNOS.items() if v == turno_nombre), None)
+            if clave_turno in turnos_libres:
+                turnos_libres.remove(clave_turno)
+        if turnos_libres:
+            disponibles[id_s] = {'nombre': nombre, 'cupo': cupo, 'turnos_disponibles': sorted(turnos_libres)}
+    return disponibles
+
+def registrar_reserva(conn: sqlite3.Connection):
+    """Registra una nueva reservación validando cliente, sala, fecha y turno."""
+    print("\n--- Registrar reservación ---")
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM clientes")
+    if c.fetchone()[0] == 0:
+        print("Debe haber al menos un cliente registrado.\n")
+        return
+    c.execute("SELECT COUNT(*) FROM salas")
+    if c.fetchone()[0] == 0:
+        print("Debe haber al menos una sala registrada.\n")
+        return
+    mostrar_clientes(conn)
+    while True:
+        clave_cliente = input("Clave del cliente: ").strip()
+        if clave_cliente.upper() == 'C':
+            print("Operación cancelada.")
+            return
+        c.execute("SELECT 1 FROM clientes WHERE id_cliente = ?", (clave_cliente,))
+        if not c.fetchone():
+            print("Clave no válida.")
+            mostrar_clientes(conn)
+            continue
+        break
+    while True:
+        fecha_txt = input("Fecha (MM-DD-YYYY): ").strip()
+        if fecha_txt.upper() == 'C':
+            print("Operación cancelada.")
+            return
+        fecha = convertir_fecha(fecha_txt)
+        if not fecha:
+            print("Formato de fecha inválido.")
+            continue
+        if fecha.weekday() == 6:
+            sugerida = fecha + timedelta(days=1)
+            print(f"La fecha seleccionada cae en domingo. ¿Deseas reservar el lunes {sugerida.strftime('%m-%d-%Y')}? (S/N)")
+            aceptar = input().strip().upper()
+            if aceptar == 'S':
+                fecha = sugerida
+            else:
+                continue
+        if not fecha_valida(fecha):
+            print("Debe reservar con al menos 2 días de anticipación.")
+            continue
+        break
+    disponibles = salas_disponibles(conn, fecha)
+    if not disponibles:
+        print("No hay salas disponibles para esa fecha.\n")
+        return
+    print(f"\nSalas disponibles para {fecha.strftime('%m-%d-%Y')}:")
+    print(f"{'Clave':6} | {'Sala':20} | {'Turnos disponibles':30} | {'Cupo':4}")
+    print("-" * 80)
+    for clave_sala, info in disponibles.items():
+        turnos_txt = ", ".join([f"{k}-{TURNOS[k]}" for k in info['turnos_disponibles']])
+        print(f"{clave_sala:6} | {info['nombre'][:20]:20} | {turnos_txt:30} | {str(info['cupo']):4}")
+    while True:
+        sala_sel = input("Clave de sala: ").strip()
+        if sala_sel.upper() == 'C':
+            print("Operación cancelada.")
+            return
+        if sala_sel not in disponibles:
+            print("Sala no válida.")
+            continue
+        break
+    posibles_turnos = disponibles[sala_sel]['turnos_disponibles']
+    turnos_mostrables = [t for t in TURNOS.keys() if t in posibles_turnos]
+    turnos_texto = "/".join(turnos_mostrables)
+    print(f"Turnos disponibles para esta sala: ({turnos_texto})")
+    while True:
+        turno_sel = input(f"Selecciona el turno ({turnos_texto}): ").strip()
+        if turno_sel.upper() == 'C':
+            print("Operación cancelada.")
+            return
+        if turno_sel not in posibles_turnos:
+            print("Turno no disponible, elige uno válido.")
+            continue
+        break
+    while True:
+        evento = input("Nombre del evento: ").strip()
+        if evento.upper() == 'C':
+            print("Operación cancelada.")
+            return
+        if not evento or evento.strip() == "" or not es_nombre_valido(evento):
+            print("El nombre del evento solo puede contener letras y espacios.")
+            continue
+        break
+    folio = siguiente_id(conn, 'reserva', 'R')
+    c.execute("INSERT INTO reservas(folio, id_cliente, id_sala, fecha, turno, evento) VALUES (?, ?, ?, ?, ?, ?)",
+              (folio, clave_cliente, sala_sel, fecha.strftime("%m-%d-%Y"), TURNOS[turno_sel], evento))
+    conn.commit()
+    print(f"\nReservación registrada con folio: {folio}\n")
+
+def consultar_y_exportar_reservas(conn: sqlite3.Connection):
+    """Consulta reservaciones por fecha y permite exportar a JSON."""
+    c = conn.cursor()
+    fecha_txt = input("Fecha a consultar (MM-DD-YYYY) (ENTER = hoy): ").strip()
+    if not fecha_txt:
+        fecha = date.today()
+    else:
+        fecha = convertir_fecha(fecha_txt)
+        if not fecha:
+            print("Formato de fecha inválido.\n")
+            return
+    c.execute("SELECT folio, turno, id_sala, id_cliente, evento FROM reservas WHERE fecha = ?", (fecha.strftime("%m-%d-%Y"),))
+    filas = c.fetchall()
+    if not filas:
+        print("No hay reservaciones para esa fecha.\n")
+        return
+    print(f"\nReservaciones del {fecha.strftime('%m-%d-%Y')}:")
+    print(f"{'Folio':8} | {'Turno':10} | {'Sala':15} | {'Cliente':20} | {'Evento':30}")
+    print("-" * 90)
+    for folio, turno, id_sala, id_cliente, evento in filas:
+        c.execute("SELECT nombre FROM salas WHERE id_sala = ?", (id_sala,))
+        nombre_sala = c.fetchone()[0]
+        c.execute("SELECT apellidos, nombre FROM clientes WHERE id_cliente = ?", (id_cliente,))
+        cliente = c.fetchone()
+        cliente_txt = f"{cliente[0]}, {cliente[1]}"
+        print(f"{folio:8} | {turno:10} | {nombre_sala[:15]:15} | {cliente_txt[:20]:20} | {evento[:30]:30}")
+    print()
+    while True:
+        resp = input("¿Deseas exportar estas reservaciones a JSON? (S/N): ").strip().upper()
+        if resp in ('S','N'):
+            break
+    if resp == 'S':
+        exportar_reservas_json(fecha, filas, conn)
+
+def exportar_reservas_json(fecha: date, filas, conn: sqlite3.Connection):
+    """Exporta las reservas consultadas a un archivo JSON nombrado por la fecha."""
+    data = []
+    c = conn.cursor()
+    for folio, turno, id_sala, id_cliente, evento in filas:
+        c.execute("SELECT nombre FROM salas WHERE id_sala = ?", (id_sala,))
+        nombre_sala = c.fetchone()[0]
+        c.execute("SELECT apellidos, nombre FROM clientes WHERE id_cliente = ?", (id_cliente,))
+        cliente = c.fetchone()
+        cliente_txt = f"{cliente[0]}, {cliente[1]}"
+        data.append({
+            'folio': folio,
+            'fecha': fecha.strftime("%m-%d-%Y"),
+            'turno': turno,
+            'sala': nombre_sala,
+            'cliente': cliente_txt,
+            'evento': evento
+        })
+    nombre_archivo = f"reservas_{fecha.strftime('%m%d%Y')}.json"
+    with open(nombre_archivo, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    print(f"Reporte exportado correctamente como {nombre_archivo}\n")
+
+def editar_evento(conn: sqlite3.Connection):
+    """Edita el nombre del evento de una reserva dentro de un rango de fechas indicado."""
+    c = conn.cursor()
+    print("\n--- Editar nombre de evento ---")
+    while True:
+        inicio_txt = input("Fecha inicio (MM-DD-YYYY): ").strip()
+        if inicio_txt.upper() == 'C':
+            print("Operación cancelada.")
+            return
+        inicio = convertir_fecha(inicio_txt)
+        if inicio:
+            break
+        print("Formato inválido.")
+    while True:
+        fin_txt = input("Fecha fin (MM-DD-YYYY): ").strip()
+        if fin_txt.upper() == 'C':
+            print("Operación cancelada.")
+            return
+        fin = convertir_fecha(fin_txt)
+        if fin and fin >= inicio:
+            break
+        print("Fecha inválida o anterior a la inicial.")
+    c.execute("SELECT folio, fecha, id_sala, evento FROM reservas WHERE fecha BETWEEN ? AND ? ORDER BY fecha",
+              (inicio.strftime("%m-%d-%Y"), fin.strftime("%m-%d-%Y")))
+    filas = c.fetchall()
+    if not filas:
+        print("No hay reservaciones en ese rango.\n")
+        return
+    print(f"\nReservaciones del {inicio.strftime('%m-%d-%Y')} al {fin.strftime('%m-%d-%Y')}:")
+    print(f"{'Folio':8} | {'Fecha':10} | {'Sala':15} | {'Evento':30}")
+    print("-" * 70)
+    for folio, fecha_txt, id_sala, evento in filas:
+        c.execute("SELECT nombre FROM salas WHERE id_sala = ?", (id_sala,))
+        nombre_sala = c.fetchone()[0]
+        print(f"{folio:8} | {fecha_txt:10} | {nombre_sala[:15]:15} | {evento[:30]:30}")
+    print()
+    while True:
+        folio_sel = input("Folio del evento a editar: ").strip()
+        if folio_sel.upper() == 'C':
+            print("Operación cancelada.")
+            return
+        c.execute("SELECT 1 FROM reservas WHERE folio = ? AND fecha BETWEEN ? AND ?", (folio_sel, inicio.strftime("%m-%d-%Y"), fin.strftime("%m-%d-%Y")))
+        if c.fetchone():
+            break
+        print("Folio no válido dentro del rango.")
+    while True:
+        nuevo_evento = input("Nuevo nombre del evento: ").strip()
+        if nuevo_evento.upper() == 'C':
+            print("Operación cancelada.")
+            return
+        if es_nombre_valido(nuevo_evento):
+            break
+        print("El nombre solo puede contener letras y espacios.")
+    c.execute("UPDATE reservas SET evento = ? WHERE folio = ?", (nuevo_evento, folio_sel))
+    conn.commit()
+    print("Nombre del evento actualizado correctamente.\n")
+
+def confirmar_y_salir(conn: sqlite3.Connection):
+    """Pregunta al usuario si desea guardar cambios (en DB ya están guardados) y sale."""
+    while True:
+        resp = input("¿Deseas salir del sistema? (S/N): ").strip().upper()
+        if resp in ('S','N'):
+            break
+    if resp == 'S':
+        conn.close()
+        print("Saliendo... ¡Hasta luego!")
+        exit()
+    else:
+        print("Regresando al menú principal.\n")
+
+def menu_principal(conn: sqlite3.Connection):
+    """Muestra el menú principal y atiende opciones del usuario."""
+    opciones = {
+        '1': ('Registrar/Mostrar clientes', lambda: (registrar_cliente(conn), mostrar_clientes(conn))),
+        '2': ('Registrar/Mostrar salas', lambda: (registrar_sala(conn), mostrar_salas(conn))),
+        '3': ('Registrar reservación', lambda: registrar_reserva(conn)),
+        '4': ('Consultar y exportar reservaciones (JSON)', lambda: consultar_y_exportar_reservas(conn)),
+        '5': ('Editar nombre de evento', lambda: editar_evento(conn)),
+        '6': ('Salir', lambda: confirmar_y_salir(conn))
+    }
+    while True:
+        print("\n===== MENÚ PRINCIPAL =====")
+        for k, (desc, _) in opciones.items():
+            print(f"{k}. {desc}")
+        op = input("Selecciona una opción: ").strip()
+        if op in opciones:
+            opciones[op][1]()
+        else:
+            print("Opción inválida.\n")
+
+if __name__ == "__main__":
+    print("Escribe 'C' para cancelar en cualquier momento.\n")
+    conexion = abrir_conexion()
+    menu_principal(conexion)
